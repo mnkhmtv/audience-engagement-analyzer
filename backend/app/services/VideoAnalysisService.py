@@ -56,12 +56,19 @@ class VideoAnalysisService:
         self._attention_estimator = AttentionEstimator(
             yaw_ok=settings.ATTENTION_YAW_OK,
             pitch_ok=settings.ATTENTION_PITCH_OK,
+            max_faces=settings.FACE_DETECT_MAX_FACES,
+            min_detection_confidence=settings.FACE_DETECT_MIN_CONF,
+            pad_ratio=settings.FACE_PAD_RATIO,
         )
         
         # базовая папка для артефактов (напр. смонтированная volume)
         self._artifacts_dir = Path(getattr(core_settings, "ARTIFACTS_DIR", "artifacts")).absolute()
         self._videos_dir = self._artifacts_dir / "videos"
         self._metrics_dir = Path(settings.METRICS_DIR).absolute()
+        self._face_pad_ratio = settings.FACE_PAD_RATIO
+        self._min_face_size = settings.FACE_MIN_SIZE
+        self._positive_threshold = settings.POSITIVE_ENGAGEMENT_THRESHOLD
+        self._min_samples = max(1, settings.MIN_SAMPLES_PER_VIDEO)
 
         self._videos_dir.mkdir(parents=True, exist_ok=True)
         self._metrics_dir.mkdir(parents=True, exist_ok=True)
@@ -242,6 +249,9 @@ class VideoAnalysisService:
         fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
         frame_step = max(int(fps * sample_sec), 1)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if total_frames > 0:
+            adaptive_step = max(total_frames // self._min_samples, 1)
+            frame_step = min(frame_step, adaptive_step)
 
         frames: list[FrameMetrics] = []
         frame_idx = 0
@@ -264,7 +274,10 @@ class VideoAnalysisService:
                     x, y, w, h = bbox
 
                     # Извлекаем лицо
-                    face_roi = frame_bgr[y : y + h, x : x + w]
+                    if min(w, h) < self._min_face_size:
+                        continue
+
+                    face_roi = self._extract_face_roi(frame_bgr, (x, y, w, h))
                     if face_roi.size == 0:
                         continue
 
@@ -301,18 +314,27 @@ class VideoAnalysisService:
                     frame_faces.append(face_metrics)
 
                     # Суммируем эмоции
+                    weight = max(attention, 0.2)
                     for emo, prob in emotion_dist.items():
-                        emotion_sum[emo] = emotion_sum.get(emo, 0.0) + prob
+                        emotion_sum[emo] = emotion_sum.get(emo, 0.0) + prob * weight
 
                 face_count = len(frame_faces)
                 positive_faces = sum(
                     1
                     for frm_face in frame_faces
-                    if frm_face.top_emotion and frm_face.top_emotion.label in POSITIVE_EMOTIONS
+                    if frm_face.engagement >= self._positive_threshold
+                    or (
+                        frm_face.top_emotion
+                        and frm_face.top_emotion.label in POSITIVE_EMOTIONS
+                        and frm_face.top_emotion.prob >= 0.5
+                    )
                 )
-                attention_ratio = (
-                    float(np.mean([frm_face.attention for frm_face in frame_faces])) if face_count else 0.0
-                )
+                if face_count:
+                    attention_values = np.array([frm_face.attention for frm_face in frame_faces], dtype=np.float32)
+                    weights = np.clip(attention_values, 0.1, 1.0)
+                    attention_ratio = float(np.average(attention_values, weights=weights))
+                else:
+                    attention_ratio = 0.0
                 engagement_ratio = float(positive_faces / face_count) if face_count else 0.0
 
                 frames.append(
@@ -525,3 +547,12 @@ class VideoAnalysisService:
 
         await session.commit()
 
+
+    def _extract_face_roi(self, frame: np.ndarray, bbox: tuple[int, int, int, int]) -> np.ndarray:
+        x, y, w, h = bbox
+        pad = int(max(w, h) * self._face_pad_ratio)
+        x1 = max(0, x - pad)
+        y1 = max(0, y - pad)
+        x2 = min(frame.shape[1], x + w + pad)
+        y2 = min(frame.shape[0], y + h + pad)
+        return frame[y1:y2, x1:x2]
