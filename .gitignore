@@ -31,3 +31,6 @@ backend/data/
 .env
 .env.*
 !.env.example
+
+node_modules/
+frontend/node_modules/
