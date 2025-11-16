@@ -14,25 +14,9 @@ class LectureCreateResponseDTO(BaseModel):
     status: str
     progress: int
     created_at: datetime
+    video_url: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
-
-
-class LectureShortDTO(BaseModel):
-    id: UUID
-    title: str
-    subject: str | None = None
-    status: str
-    progress: int
-    created_at: datetime
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class LectureDetailDTO(LectureShortDTO):
-    video_tmp_path: str | None = None
-    thumbnail_path: str | None = None
-    error_message: str | None = None
 
 
 class AnalysisResultDTO(BaseModel):
@@ -47,5 +31,24 @@ class AnalysisResultDTO(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class LectureWithAnalysisDTO(LectureDetailDTO):
+class LectureShortDTO(BaseModel):
+    id: UUID
+    title: str
+    subject: str | None = None
+    status: str
+    progress: int
+    created_at: datetime
+    video_url: str | None = None
     analysis: AnalysisResultDTO | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class LectureDetailDTO(LectureShortDTO):
+    video_tmp_path: str | None = None
+    thumbnail_path: str | None = None
+    error_message: str | None = None
+
+
+class LectureWithAnalysisDTO(LectureDetailDTO):
+    pass

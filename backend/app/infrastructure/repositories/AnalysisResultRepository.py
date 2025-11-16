@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Sequence
 from uuid import UUID
 
 from sqlalchemy import select
@@ -38,3 +39,16 @@ class AnalysisResultRepository:
         stmt = select(AnalysisResultEntity).where(AnalysisResultEntity.lecture_id == lecture_id)
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def list_by_lecture_ids(
+        self, lecture_ids: Sequence[UUID]
+    ) -> dict[UUID, AnalysisResultEntity]:
+        if not lecture_ids:
+            return {}
+
+        stmt = select(AnalysisResultEntity).where(
+            AnalysisResultEntity.lecture_id.in_(lecture_ids)
+        )
+        result = await self.session.execute(stmt)
+        analyses = result.scalars().all()
+        return {analysis.lecture_id: analysis for analysis in analyses}
